@@ -65,34 +65,6 @@ int read_word(char s[], int i, char word[]) {
     return i;
 }
 
-// find closing )
-int skip_call(char s[], int i) {
-    int depth = 0;
-    while (s[i] != '\0') {
-        if (s[i] == '"' || s[i] == '\'') {
-            int q = s[i];
-            i++;
-            while (s[i] != '\0' && s[i] != q) {
-                if (s[i] == '\\')
-                    i++;
-                i++;
-            }
-            if (s[i] == q)
-                i++;
-            continue;
-        }
-        if (s[i] == '(')
-            depth++;
-        if (s[i] == ')') {
-            depth--;
-            if (depth == 0)
-                return i + 1;
-        }
-        i++;
-    }
-    return i;
-}
-
 // copy quoted
 int copy_quoted(char s[], int i, char out[]) {
     int q = s[i];

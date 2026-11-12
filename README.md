@@ -70,8 +70,10 @@ code prints `ADD(1)` unchanged instead of making broken code.
 
 ## Limits
 
-- comment removal, includes and macros only (as per the project spec)
+- only the 3 features in the spec: comments, includes, macros
+- `#include` goes one level deep, as the spec says. A header that includes
+  another header is pasted as text, not followed.
 - `#if` / `#ifdef` are copied, not evaluated
-- a file name over 499 characters is refused
-- `test.i` still has `#ifdef` lines so gcc cannot compile it, that is normal
-  for a partial preprocessor
+- file names and include paths over 499 characters are refused
+- `test.i` still has `#ifdef` lines, so gcc cannot compile it. That is
+  normal for a partial preprocessor.
