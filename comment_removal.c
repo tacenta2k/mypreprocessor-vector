@@ -1,23 +1,19 @@
-/* comment_removal.c -- remove one-line and block comments from C code.
- *
- * The whole file is read one character at a time.  A small "state" variable
- * remembers where we are, which keeps the code short and easy to follow.
- */
+// strips comments, one char at a time
 #include <stdio.h>
 #include "comment_removal.h"
 
-/* The five places the reader can be in. */
+// where we are while reading
 enum {
-    CODE,       /* ordinary C code                                  */
-    IN_STRING,  /* inside a "..." text                               */
-    IN_CHAR,    /* inside a '...' character                          */
-    LINE_COMM,  /* after //, up to the end of the line               */
-    BLOCK_COMM  /* inside a block comment                            */
+    CODE,      // normal code
+    IN_STRING, // inside "..."
+    IN_CHAR,   // inside '...'
+    LINE_COMM, // after //
+    BLOCK_COMM // block comment
 };
 
 void remove_comments(FILE *in, FILE *out) {
     int state = CODE;
-    int prev = 0; /* the character before the current one, for BLOCK_COMM */
+    int prev = 0; // last char, needed to spot the closing */
     int ch;
 
     while ((ch = fgetc(in)) != EOF) {
@@ -29,19 +25,17 @@ void remove_comments(FILE *in, FILE *out) {
                 state = IN_CHAR;
                 fputc(ch, out);
             } else if (ch == '/') {
-                int next = fgetc(in); /* look at the character after '/' */
+                int next = fgetc(in);
                 if (next == '/') {
                     state = LINE_COMM;
                 } else if (next == '*') {
-                    /* Put a space where the comment was, so that two
-                     * names do not run together into one. */
-                    fputc(' ', out);
+                    fputc(' ', out); // space so two words do not merge
                     state = BLOCK_COMM;
                     prev = 0;
                 } else {
                     fputc('/', out);
                     if (next != EOF)
-                        ungetc(next, in); /* it was not a comment after all */
+                        ungetc(next, in); // not a comment
                 }
             } else {
                 fputc(ch, out);
@@ -50,25 +44,21 @@ void remove_comments(FILE *in, FILE *out) {
         } else if (state == IN_STRING || state == IN_CHAR) {
             fputc(ch, out);
             if (ch == '\\') {
-                /* keep the next character exactly, e.g. \" does not end the
-                 * string */
-                int next = fgetc(in);
+                int next = fgetc(in); // escaped char, keep it
                 if (next != EOF)
                     fputc(next, out);
             } else if ((state == IN_STRING && ch == '"') ||
                        (state == IN_CHAR && ch == '\'')) {
-                state = CODE; /* closing quote */
+                state = CODE;
             } else if (ch == '\n') {
-                state = CODE; /* broken string, recover on the next line */
+                state = CODE; // broken string, start over
             }
 
         } else if (state == LINE_COMM) {
             if (ch == '\\') {
                 int next = fgetc(in);
                 if (next == '\n') {
-                    /* a backslash at the end of the line means the comment
-                     * goes on.  Keep the newline so line numbers survive. */
-                    fputc('\n', out);
+                    fputc('\n', out); // continuation, keep the line break
                 } else if (next != EOF) {
                     ungetc(next, in);
                 }
@@ -77,11 +67,11 @@ void remove_comments(FILE *in, FILE *out) {
                 state = CODE;
             }
 
-        } else { /* BLOCK_COMM */
+        } else { // BLOCK_COMM
             if (ch == '/' && prev == '*') {
-                state = CODE; /* found the closing marker */
+                state = CODE;
             } else if (ch == '\n') {
-                fputc('\n', out); /* keep line numbers correct */
+                fputc('\n', out); // keep line numbers
             }
             prev = ch;
         }

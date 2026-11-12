@@ -1,37 +1,21 @@
-/* file_inclusion.c -- replace #include lines with the included file.
- *
- * Includes are followed recursively, so a header that includes another
- * header works.  One rule keeps that safe: the same file is only pasted in
- * once per run.  This is the same job the #ifndef guard at the top of every
- * real header does for the compiler, and it also means a file that includes
- * itself cannot loop forever.
- */
-#define _POSIX_C_SOURCE 200809L /* needed for popen() */
+// pastes in #include files, recursively
+#define _POSIX_C_SOURCE 200809L // for popen
 #include <stdio.h>
 #include <string.h>
 #include "file_inclusion.h"
 #include "util.h"
 
-#define MAX_FILES 100 /* how many different files we remember pasting */
+#define MAX_FILES 100
 
-/* Folders where <...> headers are looked for, in order.
- *
- * /usr/include            the normal system headers
- * /usr/include/...        machine specific headers on Debian/Ubuntu
- * /usr/local/include      headers installed by hand
- * The gcc internal folder is looked up once at start-up (see find_gcc_dir),
- * because its name changes with the gcc version. */
+// where <...> headers are looked for
 #define MAX_SYSTEM_DIRS 4
-
 static char system_dirs[MAX_SYSTEM_DIRS][MAX_PATH] = {
     "/usr/include", "/usr/include/x86_64-linux-gnu", "/usr/local/include",
-    "" /* filled in by find_gcc_dir() */
+    "" // filled by find_gcc_dir
 };
 static int system_dir_count = 3;
 
-/* Ask gcc where its own headers are, e.g. /usr/lib/gcc/x86_64-linux-gnu/12/
- * include.  This holds stddef.h and stdarg.h, which stdio.h needs.
- * If gcc cannot be asked, the folder is simply left out. */
+// gcc headers like stddef.h live in a versioned folder, ask gcc
 static void find_gcc_dir(void) {
     FILE *p = popen("gcc -print-file-name=include 2>/dev/null", "r");
 
@@ -45,7 +29,7 @@ static void find_gcc_dir(void) {
     pclose(p);
 }
 
-/* The files already pasted in. */
+// files already pasted, so a header is included only once
 static char seen[MAX_FILES][MAX_PATH];
 static int seen_count = 0;
 
@@ -63,11 +47,10 @@ static void remember_pasted(const char *path) {
         copy_text(seen[seen_count++], MAX_PATH, path);
 }
 
-/* Read the file name from a #include line, starting at line[i].
- * Fills in name and is_system.  Returns 1 on success, 0 otherwise. */
+// read name from #include <name> or "name"
 static int read_include_name(const char *line, int i, char *name, int max,
                              int *is_system) {
-    char close; /* '>' for <...> and '"' for "..." */
+    char close;
 
     while (is_blank(line[i]))
         i++;
@@ -79,10 +62,10 @@ static int read_include_name(const char *line, int i, char *name, int max,
         close = '"';
         *is_system = 0;
     } else {
-        return 0; /* a form we do not understand, leave the line alone */
+        return 0; // not a form we know
     }
 
-    i++; /* skip the opening < or " */
+    i++;
     name[0] = '\0';
     while (line[i] != close && line[i] != '\n' && line[i] != '\0') {
         add_char(name, max, line[i]);
@@ -91,8 +74,7 @@ static int read_include_name(const char *line, int i, char *name, int max,
     return name[0] != '\0';
 }
 
-/* Copy one stream, expanding every #include it contains.
- * "dir" is the folder of the file being read. */
+// copy a stream, expanding every #include in it
 static void copy_with_includes(FILE *in, FILE *out, const char *dir) {
     char line[MAX_LINE];
     char directive[64];
@@ -107,12 +89,11 @@ static void copy_with_includes(FILE *in, FILE *out, const char *dir) {
 
         if (after < 0 || strcmp(directive, "include") != 0 ||
             !read_include_name(line, after, name, sizeof(name), &is_system)) {
-            fputs(line, out); /* not an #include, copy it as it is */
+            fputs(line, out);
             continue;
         }
 
         if (is_system) {
-            /* try each system folder until the file opens */
             for (i = 0; i < system_dir_count && !found; i++) {
                 FILE *header;
 
@@ -151,9 +132,9 @@ static void copy_with_includes(FILE *in, FILE *out, const char *dir) {
 
         if (!found) {
             printf("Warning: cannot open %s\n", name);
-            fputs(line, out); /* keep the line so the problem is visible */
+            fputs(line, out); // keep the line so the gap is visible
         } else {
-            fputc('\n', out); /* make sure the pasted text ends on a line */
+            fputc('\n', out);
         }
     }
 }
@@ -163,7 +144,7 @@ int include_files(FILE *in, FILE *out, const char *path) {
 
     find_gcc_dir();
     dir_of(path, dir, sizeof(dir));
-    remember_pasted(path); /* so a file including itself is skipped */
+    remember_pasted(path); // so a file including itself is skipped
     copy_with_includes(in, out, dir);
     return 0;
 }

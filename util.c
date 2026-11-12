@@ -1,12 +1,7 @@
-/* util.c -- the small helpers declared in util.h. */
+// shared helpers
 #include <string.h>
 #include "util.h"
 
-/* ---------------------------------------------------------------------- */
-/* building strings safely                                                */
-/* ---------------------------------------------------------------------- */
-
-/* Add one character at the end of dest, if there is still room. */
 void add_char(char *dest, int max, char c) {
     int len = (int)strlen(dest);
     if (len < max - 1) {
@@ -15,7 +10,6 @@ void add_char(char *dest, int max, char c) {
     }
 }
 
-/* Add text at the end of dest, copying only what fits. */
 void add_text(char *dest, int max, const char *text) {
     int len = (int)strlen(dest);
     int i = 0;
@@ -27,8 +21,7 @@ void add_text(char *dest, int max, const char *text) {
     dest[len] = '\0';
 }
 
-/* Add src[from .. to-1] at the end of dest.  Used to copy a piece of a
- * line exactly as it was written. */
+// append src[from..to-1]
 void add_slice(char *dest, int max, const char *src, int from, int to) {
     int len = (int)strlen(dest);
     while (from < to && src[from] != '\0' && len < max - 1) {
@@ -39,15 +32,11 @@ void add_slice(char *dest, int max, const char *src, int from, int to) {
     dest[len] = '\0';
 }
 
-/* Copy src into dest without ever writing more than max characters. */
+// strcpy but safe
 void copy_text(char *dest, int max, const char *src) {
     dest[0] = '\0';
     add_text(dest, max, src);
 }
-
-/* ---------------------------------------------------------------------- */
-/* character tests                                                        */
-/* ---------------------------------------------------------------------- */
 
 int is_name_char(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -61,10 +50,6 @@ int is_blank(char c) {
 int is_space(char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
-
-/* ---------------------------------------------------------------------- */
-/* little string helpers                                                  */
-/* ---------------------------------------------------------------------- */
 
 void trim_right(char *s) {
     int len = (int)strlen(s);
@@ -86,6 +71,7 @@ void trim_left(char *s) {
     s[k] = '\0';
 }
 
+// copy name starting at s[i], return pos after it
 int read_word(const char *s, int i, char *word, int max) {
     int k = 0;
     while (is_name_char(s[i]) && k < max - 1) {
@@ -97,13 +83,10 @@ int read_word(const char *s, int i, char *word, int max) {
     return i;
 }
 
-/* ---------------------------------------------------------------------- */
-/* paths                                                                  */
-/* ---------------------------------------------------------------------- */
-
+// "src/prog.c" -> "src", "prog.c" -> ""
 void dir_of(const char *path, char *dir, int max) {
     int i;
-    int cut = -1; /* where the last '/' is, -1 means "no folder part" */
+    int cut = -1;
 
     for (i = 0; path[i] != '\0'; i++) {
         if (path[i] == '/')
@@ -127,20 +110,17 @@ void join_path(const char *dir, const char *name, char *out, int max) {
     add_text(out, max, name);
 }
 
-/* ---------------------------------------------------------------------- */
-/* quotes                                                                 */
-/* ---------------------------------------------------------------------- */
-
+// find the closing quote, return pos after it
 int skip_quoted(const char *s, int i) {
     char quote = s[i];
     i++;
     while (s[i] != '\0' && s[i] != quote && s[i] != '\n') {
         if (s[i] == '\\' && s[i + 1] != '\0')
-            i++; /* the backslash protects the next character */
+            i++; // skip the escaped char
         i++;
     }
     if (s[i] == quote)
-        i++; /* step over the closing quote */
+        i++;
     return i;
 }
 
@@ -151,10 +131,7 @@ int copy_quoted(const char *s, int i, char *out, int max) {
     return i;
 }
 
-/* ---------------------------------------------------------------------- */
-/* comments                                                               */
-/* ---------------------------------------------------------------------- */
-
+// used to skip lines that look like #define but are inside a comment
 int comment_state_after(const char *line, int in_block) {
     int i = 0;
 
@@ -169,7 +146,7 @@ int comment_state_after(const char *line, int in_block) {
         } else if (line[i] == '"' || line[i] == '\'') {
             i = skip_quoted(line, i);
         } else if (line[i] == '/' && line[i + 1] == '/') {
-            return 0; /* the rest of the line is a comment */
+            return 0; // rest of line is a comment
         } else if (line[i] == '/' && line[i + 1] == '*') {
             in_block = 1;
             i += 2;
@@ -180,20 +157,16 @@ int comment_state_after(const char *line, int in_block) {
     return in_block;
 }
 
-/* ---------------------------------------------------------------------- */
-/* preprocessor directives                                                */
-/* ---------------------------------------------------------------------- */
-
 int read_directive(const char *line, char *name, int max) {
     int i = 0;
     int k = 0;
 
-    while (is_blank(line[i])) /* spaces before the '#' are allowed */
+    while (is_blank(line[i])) // spaces before # are allowed
         i++;
     if (line[i] != '#')
         return -1;
     i++;
-    while (is_blank(line[i])) /* "#  include" is allowed too */
+    while (is_blank(line[i]))
         i++;
 
     while (is_name_char(line[i]) && k < max - 1) {
@@ -203,7 +176,7 @@ int read_directive(const char *line, char *name, int max) {
     }
     name[k] = '\0';
 
-    if (k == 0) /* a lone '#' is not useful to us */
+    if (k == 0) // just a lone #
         return -1;
     return i;
 }
