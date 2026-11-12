@@ -1,3 +1,17 @@
+# Build results: these are made by "make" and should never be committed.
 *.o
 mypreprocessor
+mypreprocessor.exe
+
+# Output of the program (*.i is the preprocessed file it creates).
 *.i
+
+# Temporary files made by the test suite.
+tests/tmp/
+
+# Editor and OS leftovers.
+*~
+*.swp
+.vscode/
+.idea/
+.DS_Store
