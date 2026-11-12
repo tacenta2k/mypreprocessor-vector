@@ -1,31 +1,26 @@
 # Makefile for mypreprocessor
-#
-#   make          build the program
-#   make run      build and run it on the example file test.c
-#   make clean    delete the program and the .o files
-#
-# CC can be changed, e.g.:  make CC=clang
+# make       -> builds mypreprocessor
+# make clean -> removes the .o files and the program
 
-CC      = gcc
-CFLAGS  = -Wall -Wextra -std=c11 -O2
-TARGET  = mypreprocessor
-OBJECTS = main.o util.o comment_removal.o file_inclusion.o macro_handler.o
-HEADERS = util.h comment_removal.h file_inclusion.h macro_handler.h
+CC = gcc
+CFLAGS = -Wall
 
-all: $(TARGET)
+all: mypreprocessor
 
-$(TARGET): $(OBJECTS)
-	$(CC) $(CFLAGS) $(OBJECTS) -o $(TARGET)
+mypreprocessor: main.o comment_removal.o file_inclusion.o macro_handler.o
+	$(CC) main.o comment_removal.o file_inclusion.o macro_handler.o -o mypreprocessor
 
-# Every .o depends on every .h: this is a small project, so rebuilding a
-# little more than needed is simpler than writing one line per file.
-%.o: %.c $(HEADERS)
-	$(CC) $(CFLAGS) -c $< -o $@
+main.o: main.c comment_removal.h file_inclusion.h macro_handler.h
+	$(CC) $(CFLAGS) -c main.c
 
-run: $(TARGET)
-	./$(TARGET) test.c
+comment_removal.o: comment_removal.c comment_removal.h
+	$(CC) $(CFLAGS) -c comment_removal.c
+
+file_inclusion.o: file_inclusion.c file_inclusion.h
+	$(CC) $(CFLAGS) -c file_inclusion.c
+
+macro_handler.o: macro_handler.c macro_handler.h
+	$(CC) $(CFLAGS) -c macro_handler.c
 
 clean:
-	rm -f $(OBJECTS) $(TARGET) *.i
-
-.PHONY: all run clean
+	rm -f *.o mypreprocessor *.i

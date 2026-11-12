@@ -1,352 +1,357 @@
-// stores #define lines and replaces the names later
+// stores #define, replaces names
 #include <stdio.h>
 #include <string.h>
 #include "macro_handler.h"
-#include "util.h"
 
-#define MAX_MACROS 2000
-#define MAX_PARAMS 20
-#define NAME_MAX 128
-#define VALUE_MAX 1024
-#define MAX_EXPAND_DEPTH 64
+#define MAX_MACROS 200
+#define MAX_PARAMS 10
+#define NAMESIZE 100
+#define LINESIZE 500
 
-typedef struct {
-    char name[NAME_MAX];
-    char value[VALUE_MAX];
-    int param_count;
-    char params[MAX_PARAMS][NAME_MAX];
-    char args[MAX_PARAMS][VALUE_MAX]; // args of the use being expanded
-} Macro;
+char macro_name[MAX_MACROS][NAMESIZE];
+char macro_value[MAX_MACROS][LINESIZE];
+char param_name[MAX_MACROS][MAX_PARAMS][NAMESIZE];
+int param_count[MAX_MACROS];
+int macro_count = 0;
 
-static Macro macros[MAX_MACROS];
-static int macro_count = 0;
+// a-z A-Z 0-9 _
+int is_name_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
 
-// newest first, so a redefined macro wins
-static int find_macro(const char *name) {
+int is_space(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+// add char
+void add_char(char s[], char c) {
+    int n = strlen(s);
+    if (n < LINESIZE - 1) {
+        s[n] = c;
+        s[n + 1] = '\0';
+    }
+}
+
+// add text
+void add_text(char s[], char t[]) {
+    int n = strlen(s);
+    int i = 0;
+    while (t[i] != '\0' && n < LINESIZE - 1) {
+        s[n] = t[i];
+        n++;
+        i++;
+    }
+    s[n] = '\0';
+}
+
+// trim end
+void trim_end(char s[]) {
+    int n = strlen(s);
+    while (n > 0 && is_space(s[n - 1]))
+        n--;
+    s[n] = '\0';
+}
+
+// read name
+int read_word(char s[], int i, char word[]) {
+    int k = 0;
+    while (is_name_char(s[i]) && k < NAMESIZE - 1) {
+        word[k] = s[i];
+        k++;
+        i++;
+    }
+    word[k] = '\0';
+    return i;
+}
+
+// find closing )
+int skip_call(char s[], int i) {
+    int depth = 0;
+    while (s[i] != '\0') {
+        if (s[i] == '"' || s[i] == '\'') {
+            int q = s[i];
+            i++;
+            while (s[i] != '\0' && s[i] != q) {
+                if (s[i] == '\\')
+                    i++;
+                i++;
+            }
+            if (s[i] == q)
+                i++;
+            continue;
+        }
+        if (s[i] == '(')
+            depth++;
+        if (s[i] == ')') {
+            depth--;
+            if (depth == 0)
+                return i + 1;
+        }
+        i++;
+    }
+    return i;
+}
+
+// copy quoted
+int copy_quoted(char s[], int i, char out[]) {
+    int q = s[i];
+    add_char(out, s[i]);
+    i++;
+    while (s[i] != '\0' && s[i] != q) {
+        if (s[i] == '\\') {
+            add_char(out, s[i]);
+            i++;
+        }
+        add_char(out, s[i]);
+        i++;
+    }
+    if (s[i] == q) {
+        add_char(out, s[i]);
+        i++;
+    }
+    return i;
+}
+
+// find macro
+int find_macro(char word[]) {
     int m;
     for (m = macro_count - 1; m >= 0; m--) {
-        if (strcmp(macros[m].name, name) == 0)
+        if (strcmp(macro_name[m], word) == 0)
             return m;
     }
     return -1;
 }
 
-static int find_param(int m, const char *name) {
+// find param number
+int find_param(int m, char word[]) {
     int p;
-    for (p = 0; p < macros[m].param_count; p++) {
-        if (strcmp(macros[m].params[p], name) == 0)
+    for (p = 0; p < param_count[m]; p++) {
+        if (strcmp(param_name[m][p], word) == 0)
             return p;
     }
     return -1;
 }
 
-// store #define NAME value or #define NAME(a, b) value
-// returns 1 if the line was handled
-static int store_macro(const char *line, int after_define) {
-    Macro m;
-    char word[NAME_MAX];
-    int i = after_define;
-    int p;
+// store one #define
+void store_macro(char line[]) {
+    int m, p, i;
+    char word[NAMESIZE];
 
-    memset(&m, 0, sizeof(m));
+    if (macro_count == MAX_MACROS)
+        return;
 
-    while (is_blank(line[i]))
+    // skip to name
+    i = 0;
+    while (is_space(line[i]))
+        i++;
+    i = i + 7;
+    while (is_space(line[i]))
         i++;
 
-    i = read_word(line, i, word, sizeof(word));
+    i = read_word(line, i, word);
     if (word[0] == '\0')
-        return 0;
-    copy_text(m.name, sizeof(m.name), word);
+        return;
 
-    // no space before ( means it takes params
+    // redefine?
+    m = find_macro(word);
+    if (m == -1) {
+        m = macro_count;
+        macro_count++;
+    }
+    strcpy(macro_name[m], word);
+
+    // ( right after name = has params
+    p = 0;
     if (line[i] == '(') {
         i++;
-        while (line[i] != ')' && line[i] != '\n' && line[i] != '\0') {
+        while (line[i] != ')' && line[i] != '\0' && p < MAX_PARAMS) {
             if (is_name_char(line[i])) {
-                i = read_word(line, i, word, sizeof(word));
-                if (m.param_count < MAX_PARAMS) {
-                    copy_text(m.params[m.param_count], NAME_MAX, word);
-                    m.param_count++;
-                }
+                i = read_word(line, i, param_name[m][p]);
+                p++;
             } else {
-                i++; // skip , and spaces
+                i++;
             }
         }
         if (line[i] == ')')
             i++;
     }
+    param_count[m] = p;
 
-    while (is_blank(line[i]))
+    // value
+    while (is_space(line[i]))
         i++;
-
-    // rest of the line is the value
-    copy_text(m.value, sizeof(m.value), &line[i]);
-    trim_right(m.value);
-
-    // value continues on the next line, not supported
-    if (m.value[0] != '\0' && m.value[strlen(m.value) - 1] == '\\')
-        return 0;
-
-    p = find_macro(m.name);
-    if (p >= 0) {
-        macros[p] = m; // redefined
-        return 1;
-    }
-    if (macro_count >= MAX_MACROS) {
-        printf("Warning: too many macros, skipping %s\n", m.name);
-        return 1;
-    }
-    macros[macro_count] = m;
-    macro_count++;
-    return 1;
+    strcpy(macro_value[m], &line[i]);
+    trim_end(macro_value[m]);
 }
 
-// split ADD(1, 2+3) into "1" and "2+3"
-// text[i] is the (, returns how many args
-static int read_args(const char *text, int i, char args[][VALUE_MAX],
-                     int max_args) {
-    int count = 0;
+// copy one arg
+void copy_arg(char args[], char s[], int start, int end) {
+    int k = 0;
+
+    while (start < end && (s[start] == ' ' || s[start] == '\t'))
+        start++;
+    while (end > start && (s[end - 1] == ' ' || s[end - 1] == '\t'))
+        end--;
+
+    while (start < end && k < LINESIZE - 1) {
+        args[k] = s[start];
+        k++;
+        start++;
+    }
+    args[k] = '\0';
+}
+
+// read args, s[i] is (
+// returns pos, sets *count
+int read_args(char s[], int i, char args[][LINESIZE], int *count) {
+    int n = 0;
     int depth = 0;
     int start;
+    int k;
+
+    for (k = 0; k < MAX_PARAMS; k++)
+        args[k][0] = '\0';
 
     i++;
     start = i;
 
-    for (;;) {
-        char ch = text[i];
-
-        if (ch == '\0' || ch == '\n')
-            break;
-        if (ch == '"' || ch == '\'') {
-            i = skip_quoted(text, i);
+    while (s[i] != '\0') {
+        if (s[i] == '"' || s[i] == '\'') {
+            int q = s[i];
+            i++;
+            while (s[i] != '\0' && s[i] != q) {
+                if (s[i] == '\\')
+                    i++;
+                i++;
+            }
+            if (s[i] == q)
+                i++;
             continue;
         }
-        if (ch == '(') {
+
+        if (s[i] == '(') {
             depth++;
-        } else if (ch == ')') {
-            if (depth == 0) {
-                if (count < max_args) {
-                    args[count][0] = '\0';
-                    add_slice(args[count], VALUE_MAX, text, start, i);
-                    trim_left(args[count]);
-                    trim_right(args[count]);
-                    count++;
-                }
-                return count;
-            }
+        } else if (s[i] == ')' && depth == 0) {
+            copy_arg(args[n], s, start, i);
+            *count = n + 1;
+            return i + 1;
+        } else if (s[i] == ')') {
             depth--;
-        } else if (ch == ',' && depth == 0) {
-            if (count < max_args) {
-                args[count][0] = '\0';
-                add_slice(args[count], VALUE_MAX, text, start, i);
-                trim_left(args[count]);
-                trim_right(args[count]);
-                count++;
-            }
+        } else if (s[i] == ',' && depth == 0) {
+            copy_arg(args[n], s, start, i);
+            if (n < MAX_PARAMS - 1)
+                n++;
             start = i + 1;
         }
         i++;
     }
 
-    // no closing )
-    if (count < max_args && start < i) {
-        args[count][0] = '\0';
-        add_slice(args[count], VALUE_MAX, text, start, i);
-        trim_left(args[count]);
-        trim_right(args[count]);
-        count++;
-    }
-    return count;
-}
-
-// position after the ) that closes the ( at text[i]
-static int skip_call(const char *text, int i) {
-    int depth = 0;
-
-    for (; text[i] != '\0' && text[i] != '\n'; i++) {
-        if (text[i] == '"' || text[i] == '\'') {
-            i = skip_quoted(text, i) - 1;
-        } else if (text[i] == '(') {
-            depth++;
-        } else if (text[i] == ')') {
-            depth--;
-            if (depth == 0)
-                return i + 1;
-        }
-    }
+    *count = n + 1;
     return i;
 }
 
-static void replace_line(const char *line, char *out, int max);
+// put args in value
+void fill_value(int m, char args[][LINESIZE], char out[]) {
+    char word[NAMESIZE];
+    int i = 0;
+    int p;
 
-// guard for args that contain macro calls
-static int expand_level = 0;
-
-// expand macros inside args, result must not be the same array
-static void expand_args(char args[][VALUE_MAX], int argc,
-                        char result[][VALUE_MAX]) {
-    char tmp[VALUE_MAX];
-    int a;
-
-    for (a = 0; a < argc; a++) {
-        if (expand_level >= MAX_EXPAND_DEPTH) {
-            copy_text(result[a], VALUE_MAX, args[a]);
-            continue;
-        }
-        expand_level++;
-        replace_line(args[a], tmp, sizeof(tmp));
-        expand_level--;
-        copy_text(result[a], VALUE_MAX, tmp);
-    }
-}
-
-// read and expand the args of a call, store them in macros[m].args
-// returns pos after the call, -1 if the arg count is wrong
-static int prepare_args(int m, const char *text, int i) {
-    char raw[MAX_PARAMS][VALUE_MAX];
-    char expanded[MAX_PARAMS][VALUE_MAX];
-    int argc = read_args(text, i, raw, MAX_PARAMS);
-    int a;
-
-    if (argc != macros[m].param_count)
-        return -1;
-
-    expand_args(raw, argc, expanded);
-    for (a = 0; a < argc; a++)
-        copy_text(macros[m].args[a], VALUE_MAX, expanded[a]);
-    return skip_call(text, i);
-}
-
-// write the expanded value of macro m to out
-// active[] stops #define A A from looping
-static void expand_use(int m, char *out, int max, int active[], int depth) {
-    char word[NAME_MAX];
-    char my_args[MAX_PARAMS][VALUE_MAX];
-    const char *value = macros[m].value;
-    int i;
-    int a;
-
-    // own copy, nested calls would overwrite macros[m].args
-    for (a = 0; a < macros[m].param_count; a++)
-        copy_text(my_args[a], VALUE_MAX, macros[m].args[a]);
-
-    active[m] = 1;
-
-    for (i = 0; value[i] != '\0';) {
-        char ch = value[i];
-
-        if (ch == '"' || ch == '\'') {
-            i = copy_quoted(value, i, out, max);
-        } else if (!is_name_char(ch)) {
-            add_char(out, max, ch);
-            i++;
-        } else {
-            int p;
-            int other;
-
-            i = read_word(value, i, word, sizeof(word));
-
+    while (macro_value[m][i] != '\0') {
+        if (macro_value[m][i] == '"' || macro_value[m][i] == '\'') {
+            i = copy_quoted(macro_value[m], i, out);
+        } else if (is_name_char(macro_value[m][i])) {
+            i = read_word(macro_value[m], i, word);
             p = find_param(m, word);
-            if (p >= 0) {
-                add_text(out, max, my_args[p]);
-                continue;
-            }
-
-            other = find_macro(word);
-            if (other < 0 || depth >= MAX_EXPAND_DEPTH || active[other]) {
-                add_text(out, max, word);
-                continue;
-            }
-
-            if (macros[other].param_count > 0) {
-                int end;
-
-                if (value[i] != '(') {
-                    add_text(out, max, word);
-                    continue;
-                }
-                end = prepare_args(other, value, i);
-                if (end < 0) {
-                    add_text(out, max, word); // wrong arg count
-                    i = skip_call(value, i);
-                    continue;
-                }
-                i = end;
-            }
-            expand_use(other, out, max, active, depth + 1);
+            if (p == -1)
+                add_text(out, word);
+            else
+                add_text(out, args[p]);
+        } else {
+            add_char(out, macro_value[m][i]);
+            i++;
         }
     }
-
-    active[m] = 0;
 }
 
-// replace all macro names in one line
-static void replace_line(const char *line, char *out, int max) {
-    char word[NAME_MAX];
-    char value[VALUE_MAX];
-    int active[MAX_MACROS];
-    int i;
+// replace macros in line
+void replace_line(char line[], char result[]) {
+    char word[NAMESIZE];
+    char args[MAX_PARAMS][LINESIZE];
+    char value[LINESIZE];
+    int i = 0;
+    int m;
+    int argc;
+    int end;
 
-    for (i = 0; i < MAX_MACROS; i++)
-        active[i] = 0;
+    result[0] = '\0';
 
-    i = 0;
-    out[0] = '\0';
     while (line[i] != '\0') {
         if (line[i] == '"' || line[i] == '\'') {
-            i = copy_quoted(line, i, out, max);
-        } else if (!is_name_char(line[i])) {
-            add_char(out, max, line[i]);
-            i++;
-        } else {
-            int m;
-
-            i = read_word(line, i, word, sizeof(word));
+            i = copy_quoted(line, i, result);
+        } else if (is_name_char(line[i])) {
+            i = read_word(line, i, word);
             m = find_macro(word);
-            if (m < 0) {
-                add_text(out, max, word);
-            } else if (macros[m].param_count == 0) {
-                expand_use(m, out, max, active, 0);
-            } else if (line[i] == '(') {
-                int end = prepare_args(m, line, i);
 
-                if (end < 0) {
-                    add_text(out, max, word); // wrong arg count
-                } else {
+            if (m == -1) {
+                add_text(result, word);
+            } else if (param_count[m] == 0) {
+                add_text(result, macro_value[m]);
+            } else if (line[i] == '(') {
+                end = read_args(line, i, args, &argc);
+
+                if (param_count[m] == argc) {
                     value[0] = '\0';
-                    expand_use(m, value, sizeof(value), active, 0);
-                    add_text(out, max, value);
+                    fill_value(m, args, value);
+                    add_text(result, value);
                     i = end;
+                } else {
+                    add_text(result, word);
+                    // keep ( )
                 }
             } else {
-                add_text(out, max, word); // needs ( after the name
+                add_text(result, word);
             }
+        } else {
+            add_char(result, line[i]);
+            i++;
         }
     }
 }
 
-void process_macros(FILE *in, FILE *out) {
-    char line[MAX_LINE];
-    char directive[64];
-    char out_line[MAX_LINE];
-    int in_comment = 0;
+void process_macros(char in[], char out[]) {
+    FILE *fp = fopen(in, "r");
+    FILE *fq = fopen(out, "w");
+    char line[LINESIZE];
+    char result[LINESIZE];
+    int pass;
 
-    while (fgets(line, sizeof(line), in) != NULL) {
-        int after = read_directive(line, directive, sizeof(directive));
+    if (fp == NULL || fq == NULL)
+        return;
 
-        // skip lines that only look like a directive, they are in a comment
-        if (in_comment || after < 0) {
-            in_comment = comment_state_after(line, in_comment);
-            replace_line(line, out_line, sizeof(out_line));
-            fputs(out_line, out);
-            continue;
-        }
+    while (fgets(line, LINESIZE, fp) != NULL) {
+        int start = 0;
 
-        if (strcmp(directive, "define") == 0) {
-            if (!store_macro(line, after))
-                fputs(line, out); // not supported, keep it visible
+        // skip spaces
+        while (line[start] == ' ' || line[start] == '\t')
+            start++;
+
+        if (strncmp(&line[start], "#define", 7) == 0) {
+            store_macro(line);
+        } else if (line[start] == '#') {
+            fputs(line, fq);
         } else {
-            fputs(line, out); // #include, #ifdef, ...
+            // again, value may have macros
+            for (pass = 0; pass < 10; pass++) {
+                replace_line(line, result);
+                if (strcmp(line, result) == 0)
+                    break;
+                strcpy(line, result);
+            }
+            fputs(line, fq);
         }
     }
+
+    fclose(fp);
+    fclose(fq);
 }

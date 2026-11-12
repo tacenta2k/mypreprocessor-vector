@@ -1,39 +1,25 @@
-// pastes in #include files, recursively
-#define _POSIX_C_SOURCE 200809L // for popen
+// pastes #include files
 #include <stdio.h>
 #include <string.h>
 #include "file_inclusion.h"
-#include "util.h"
 
-#define MAX_FILES 100
+#define MAXFILES 20
 
-// where <...> headers are looked for
-#define MAX_SYSTEM_DIRS 4
-static char system_dirs[MAX_SYSTEM_DIRS][MAX_PATH] = {
-    "/usr/include", "/usr/include/x86_64-linux-gnu", "/usr/local/include",
-    "" // filled by find_gcc_dir
-};
-static int system_dir_count = 3;
+char seen[MAXFILES][500];
+int seen_count = 0;
 
-// gcc headers like stddef.h live in a versioned folder, ask gcc
-static void find_gcc_dir(void) {
-    FILE *p = popen("gcc -print-file-name=include 2>/dev/null", "r");
-
-    if (p == NULL)
-        return;
-    if (fgets(system_dirs[3], MAX_PATH, p) != NULL) {
-        trim_right(system_dirs[3]);
-        if (system_dirs[3][0] == '/')
-            system_dir_count = 4;
-    }
-    pclose(p);
+// find #include, -1 if none
+int include_start(char line[]) {
+    int i = 0;
+    while (line[i] == ' ' || line[i] == '\t')
+        i++;
+    if (strncmp(&line[i], "#include", 8) == 0)
+        return i + 8;
+    return -1;
 }
 
-// files already pasted, so a header is included only once
-static char seen[MAX_FILES][MAX_PATH];
-static int seen_count = 0;
-
-static int already_pasted(const char *path) {
+// already pasted?
+int was_pasted(char path[]) {
     int i;
     for (i = 0; i < seen_count; i++) {
         if (strcmp(seen[i], path) == 0)
@@ -42,109 +28,130 @@ static int already_pasted(const char *path) {
     return 0;
 }
 
-static void remember_pasted(const char *path) {
-    if (seen_count < MAX_FILES)
-        copy_text(seen[seen_count++], MAX_PATH, path);
-}
+// paste file and its includes
+void paste_file(FILE *fq, char path[], char dir[]) {
+    FILE *fh = fopen(path, "r");
+    char line[500];
+    char full[500];
+    char name[500];
+    char newdir[500];
+    int i, k;
 
-// read name from #include <name> or "name"
-static int read_include_name(const char *line, int i, char *name, int max,
-                             int *is_system) {
-    char close;
+    if (fh == NULL)
+        return;
 
-    while (is_blank(line[i]))
-        i++;
+    if (seen_count < MAXFILES)
+        strcpy(seen[seen_count++], path);
 
-    if (line[i] == '<') {
-        close = '>';
-        *is_system = 1;
-    } else if (line[i] == '"') {
-        close = '"';
-        *is_system = 0;
-    } else {
-        return 0; // not a form we know
-    }
+    while (fgets(line, 500, fh) != NULL) {
 
-    i++;
-    name[0] = '\0';
-    while (line[i] != close && line[i] != '\n' && line[i] != '\0') {
-        add_char(name, max, line[i]);
-        i++;
-    }
-    return name[0] != '\0';
-}
-
-// copy a stream, expanding every #include in it
-static void copy_with_includes(FILE *in, FILE *out, const char *dir) {
-    char line[MAX_LINE];
-    char directive[64];
-    char name[MAX_PATH];
-    char path[MAX_PATH];
-
-    while (fgets(line, sizeof(line), in) != NULL) {
-        int after = read_directive(line, directive, sizeof(directive));
-        int is_system = 0;
-        int found = 0;
-        int i;
-
-        if (after < 0 || strcmp(directive, "include") != 0 ||
-            !read_include_name(line, after, name, sizeof(name), &is_system)) {
-            fputs(line, out);
+        i = include_start(line);
+        if (i == -1) {
+            fputs(line, fq);
             continue;
         }
+        while (line[i] == ' ' || line[i] == '\t')
+            i++;
 
-        if (is_system) {
-            for (i = 0; i < system_dir_count && !found; i++) {
-                FILE *header;
-
-                join_path(system_dirs[i], name, path, sizeof(path));
-                if (already_pasted(path)) {
-                    found = 1;
-                    break;
-                }
-                header = fopen(path, "r");
-                if (header != NULL) {
-                    found = 1;
-                    remember_pasted(path);
-                    copy_with_includes(header, out, system_dirs[i]);
-                    fclose(header);
-                }
-            }
+        if (line[i] == '<') {
+            strcpy(full, "/usr/include/");
+        } else if (line[i] == '"') {
+            strcpy(full, dir);
+            if (dir[0] != '\0')
+                strcat(full, "/");
         } else {
-            FILE *header;
+            fputs(line, fq);
+            continue;
+        }
+        i++;
 
-            join_path(dir, name, path, sizeof(path));
-            if (already_pasted(path)) {
-                found = 1;
-            } else {
-                header = fopen(path, "r");
-                if (header != NULL) {
-                    char header_dir[MAX_PATH];
+        k = strlen(full);
+        while (line[i] != '>' && line[i] != '"' && line[i] != '\n' &&
+               line[i] != '\0' && k < 498) {
+            full[k] = line[i];
+            k++;
+            i++;
+        }
+        full[k] = '\0';
 
-                    found = 1;
-                    remember_pasted(path);
-                    dir_of(path, header_dir, sizeof(header_dir));
-                    copy_with_includes(header, out, header_dir);
-                    fclose(header);
-                }
+        // folder for its "..." includes
+        strcpy(name, full);
+        for (k = strlen(name) - 1; k >= 0; k--) {
+            if (name[k] == '/') {
+                name[k] = '\0';
+                break;
             }
         }
+        strcpy(newdir, (k >= 0) ? name : "");
 
-        if (!found) {
-            printf("Warning: cannot open %s\n", name);
-            fputs(line, out); // keep the line so the gap is visible
-        } else {
-            fputc('\n', out);
+        if (was_pasted(full)) {
+            continue;
         }
+        if (fopen(full, "r") == NULL) {
+            printf("skipped %s (not found)\n", full);
+            fputs(line, fq);
+            continue;
+        }
+        paste_file(fq, full, newdir);
+        fputc('\n', fq);
     }
+
+    fclose(fh);
 }
 
-int include_files(FILE *in, FILE *out, const char *path) {
-    char dir[MAX_PATH];
+void include_files(char in[], char out[]) {
+    FILE *fp = fopen(in, "r");
+    FILE *fq = fopen(out, "w");
+    char line[500];
+    char path[500];
+    int i, k;
 
-    find_gcc_dir();
-    dir_of(path, dir, sizeof(dir));
-    remember_pasted(path); // so a file including itself is skipped
-    copy_with_includes(in, out, dir);
-    return 0;
+    if (fp == NULL || fq == NULL)
+        return;
+
+    seen_count = 0;
+
+    while (fgets(line, 500, fp) != NULL) {
+
+        i = include_start(line);
+        if (i == -1) {
+            fputs(line, fq);
+            continue;
+        }
+        while (line[i] == ' ' || line[i] == '\t')
+            i++;
+
+        if (line[i] == '<') {
+            strcpy(path, "/usr/include/");
+        } else if (line[i] == '"') {
+            strcpy(path, "");
+        } else {
+            fputs(line, fq);
+            continue;
+        }
+        i++;
+
+        k = strlen(path);
+        while (line[i] != '>' && line[i] != '"' && line[i] != '\n' &&
+               line[i] != '\0' && k < 498) {
+            path[k] = line[i];
+            k++;
+            i++;
+        }
+        path[k] = '\0';
+
+        if (fopen(path, "r") == NULL) {
+            printf("skipped %s (not found)\n", path);
+            fputs(line, fq);
+            continue;
+        }
+        if (was_pasted(path))
+            continue;
+
+        paste_file(fq, path, "");
+        fputc('\n', fq);
+    }
+
+    fclose(fp);
+    fclose(fq);
 }

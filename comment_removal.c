@@ -1,79 +1,69 @@
-// strips comments, one char at a time
+// removes comments
 #include <stdio.h>
 #include "comment_removal.h"
 
-// where we are while reading
-enum {
-    CODE,      // normal code
-    IN_STRING, // inside "..."
-    IN_CHAR,   // inside '...'
-    LINE_COMM, // after //
-    BLOCK_COMM // block comment
-};
+void remove_comments(char in[], char out[]) {
+    FILE *fp = fopen(in, "r");
+    FILE *fq = fopen(out, "w");
+    int c, d;
 
-void remove_comments(FILE *in, FILE *out) {
-    int state = CODE;
-    int prev = 0; // last char, needed to spot the closing */
-    int ch;
+    if (fp == NULL || fq == NULL)
+        return;
 
-    while ((ch = fgetc(in)) != EOF) {
-        if (state == CODE) {
-            if (ch == '"') {
-                state = IN_STRING;
-                fputc(ch, out);
-            } else if (ch == '\'') {
-                state = IN_CHAR;
-                fputc(ch, out);
-            } else if (ch == '/') {
-                int next = fgetc(in);
-                if (next == '/') {
-                    state = LINE_COMM;
-                } else if (next == '*') {
-                    fputc(' ', out); // space so two words do not merge
-                    state = BLOCK_COMM;
-                    prev = 0;
-                } else {
-                    fputc('/', out);
-                    if (next != EOF)
-                        ungetc(next, in); // not a comment
+    while ((c = fgetc(fp)) != EOF) {
+
+        // string or char, copy
+        if (c == '"' || c == '\'') {
+            int q = c;
+            fputc(c, fq);
+            while ((c = fgetc(fp)) != EOF) {
+                fputc(c, fq);
+                if (c == '\\') {
+                    c = fgetc(fp);
+                    if (c != EOF)
+                        fputc(c, fq);
+                } else if (c == q) {
+                    break;
                 }
-            } else {
-                fputc(ch, out);
+            }
+        }
+
+        // maybe comment
+        else if (c == '/') {
+            d = fgetc(fp);
+
+            // line comment
+            if (d == '/') {
+                while ((c = fgetc(fp)) != EOF && c != '\n')
+                    ;
+                fputc('\n', fq);
             }
 
-        } else if (state == IN_STRING || state == IN_CHAR) {
-            fputc(ch, out);
-            if (ch == '\\') {
-                int next = fgetc(in); // escaped char, keep it
-                if (next != EOF)
-                    fputc(next, out);
-            } else if ((state == IN_STRING && ch == '"') ||
-                       (state == IN_CHAR && ch == '\'')) {
-                state = CODE;
-            } else if (ch == '\n') {
-                state = CODE; // broken string, start over
-            }
-
-        } else if (state == LINE_COMM) {
-            if (ch == '\\') {
-                int next = fgetc(in);
-                if (next == '\n') {
-                    fputc('\n', out); // continuation, keep the line break
-                } else if (next != EOF) {
-                    ungetc(next, in);
+            // block comment
+            else if (d == '*') {
+                int prev = 0;
+                while ((c = fgetc(fp)) != EOF) {
+                    if (c == '\n')
+                        fputc('\n', fq); // keep lines
+                    if (prev == '*' && c == '/')
+                        break;
+                    prev = c;
                 }
-            } else if (ch == '\n') {
-                fputc('\n', out);
-                state = CODE;
             }
 
-        } else { // BLOCK_COMM
-            if (ch == '/' && prev == '*') {
-                state = CODE;
-            } else if (ch == '\n') {
-                fputc('\n', out); // keep line numbers
+            // plain slash
+            else {
+                fputc(c, fq);
+                if (d != EOF)
+                    ungetc(d, fp);
             }
-            prev = ch;
+        }
+
+        else {
+            fputc(c, fq);
         }
     }
+
+    fclose(fp);
+    fclose(fq);
 }
